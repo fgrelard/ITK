@@ -203,7 +203,7 @@ main(int argc, char * argv[])
 
   filter->SetFixedImage(fixedImageCaster->GetOutput());
   filter->SetMovingImage(movingImageCaster->GetOutput());
-  filter->SetNumberOfIterations(150);
+  filter->SetNumberOfIterations(5);
   filter->SetTimeStep(1);
   filter->SetConstraintWeight(1);
   filter->Update();

@@ -54,6 +54,10 @@ target_link_libraries(ImageRegistration19 ${ITK_LIBRARIES})
 add_executable(ImageRegistration20 ImageRegistration20.cxx )
 target_link_libraries(ImageRegistration20 ${ITK_LIBRARIES})
 
+add_executable(ImageRegistrationMALDI ImageRegistrationMALDI.cxx )
+target_link_libraries(ImageRegistrationMALDI ${ITK_LIBRARIES})
+
+
 add_executable(DeformableRegistration6 DeformableRegistration6.cxx )
 target_link_libraries(DeformableRegistration6 ${ITK_LIBRARIES})
 
@@ -64,6 +68,9 @@ add_executable(DeformableRegistration8 DeformableRegistration8.cxx )
 target_link_libraries(DeformableRegistration8 ${ITK_LIBRARIES})
 
 if( ITK_USE_FFTWD AND NOT ITK_USE_CUFFTW )
+  add_executable(VariationalRegistrationMain VariationalRegistrationMain.cxx)
+  target_link_libraries(VariationalRegistrationMain ${ITK_LIBRARIES})
+
   add_executable(DeformableRegistration9 DeformableRegistration9.cxx )
   target_link_libraries(DeformableRegistration9 ${ITK_LIBRARIES})
 
