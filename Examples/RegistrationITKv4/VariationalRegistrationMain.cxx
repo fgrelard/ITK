@@ -86,10 +86,30 @@ extern "C"
 #include "itkImageFileReader.h"
 #include "itkImageFileWriter.h"
 #include "itkHistogramMatchingImageFilter.h"
+#include "itkJoinSeriesImageFilter.h"
+#include "itkImageDuplicator.h"
+#include "itkExtractImageFilter.h"
 
 #include <itkMath.h>
 
 using namespace itk;
+
+template <typename FunctionType, typename ImageType, typename DisplacementFieldType>
+ImageType fieldToImage(const ImageType& fixedImage, const ImageType& movingImage,  const  DisplacementFieldType& field) {
+    using MovingImageWarperType = typename FunctionType::MovingImageWarperType;
+    using InterpolatorType =
+        itk::NearestNeighborInterpolateImageFunction<typename ImageType::ObjectType, double>;
+    typename MovingImageWarperType::Pointer warper = MovingImageWarperType::New();
+    typename InterpolatorType::Pointer interpolator = InterpolatorType::New();
+
+    warper->SetInput( movingImage );
+    warper->SetOutputParametersFromImage( fixedImage );
+    warper->SetInterpolator(interpolator);
+    warper->SetDisplacementField( field );
+    warper->UpdateLargestPossibleRegion();
+    return warper->GetOutput();
+
+}
 
 template <typename ImageType, typename DisplacementFieldType>
 typename ImageType::Pointer computeAccumulationImage(const typename DisplacementFieldType::Pointer& field) {
@@ -122,7 +142,7 @@ typename ImageType::Pointer computeAccumulationImage(const typename Displacement
     for (it.GoToBegin(); !it.IsAtEnd(); ++it){
         typename DisplacementFieldType::IndexType index3D = it.GetIndex();
         typename DisplacementFieldType::PixelType v = it.Get();
-        typename DisplacementFieldType::IndexType accIndex;
+        typename ImageType::IndexType accIndex;
         for (size_t i = 0; i < 2; i++)
             accIndex[i] = v[i] + index3D[i];
         if (region.IsInside(accIndex))
@@ -131,47 +151,86 @@ typename ImageType::Pointer computeAccumulationImage(const typename Displacement
     return im;
 }
 
-template <typename RegistrationFilterType, typename ImageType>
+template <typename RegistrationFilterType>
 class CommandIterationUpdate : public itk::Command
 {
 public:
-    using ImagePointer = typename ImageType::Pointer;
+    using ImageTypeU2D = itk::Image<unsigned char, 2>;
+    using ImageTypeU3D = itk::Image<unsigned char, 3>;
+
+    using ImageType = typename RegistrationFilterType::FixedImageType;
+    using PixelType = typename ImageType::PixelType;
+    using ImageType2D = itk::Image<PixelType, 2>;
     using Self = CommandIterationUpdate;
     using Superclass = itk::Command;
     using Pointer = itk::SmartPointer<CommandIterationUpdate>;
-    using PasteFilterType = itk::PasteImageFilter<MiddleImageType, ImageType>;
+    using JoinSeriesAccFilter = itk::JoinSeriesImageFilter<ImageTypeU2D, ImageTypeU3D>;
+    using JoinSeriesDeformationFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
+    using ExtractFilterType = itk::ExtractImageFilter<ImageType, ImageType2D>;
+
     itkNewMacro(CommandIterationUpdate);
 
 protected:
-    CommandIterationUpdate(){};
+    CommandIterationUpdate(){
+        m_JoinAcc = JoinSeriesAccFilter::New();
+        m_JoinDeformation = JoinSeriesDeformationFilter::New();
+    };
 
 
 public:
-    void SetImage(const ImagePointer& image) {
-        m_Image = image;
+
+    ImageTypeU3D::Pointer GetOutput() {
+        return m_JoinAcc->GetOutput();
     }
 
-    ImagePointer GetImage() {
-        return m_Image;
+    typename ImageType::Pointer GetDeformation() {
+        return m_JoinDeformation->GetOutput();
     }
 
     void Execute(itk::Object * caller, const itk::EventObject & event) override
     {
+        using DuplicatorType = itk::ImageDuplicator<ImageType>;
+        using ImageVector = typename RegistrationFilterType::OutputImageType;
+
         auto * filter = static_cast<RegistrationFilterType * >(caller);
         if (!(itk::IterationEvent().CheckEvent(&event)))
         {
             return;
         }
-        using ImageVector = typename RegistrationFilterType::OutputImageType;
-        using ImageType2D = itk::Image<unsigned char, 2>;
 
         typename ImageVector::Pointer field = filter->GetDisplacementField();
-        typename ImageVector::IndexType index;
-        index[0] = 0;
-        index[1] = 0;
-        index[2] = 0;
-        ImageType2D::Pointer img = computeAccumulationImage<ImageType2D, ImageVector>(field);
-        std::cout << field->GetPixel(index) << std::endl;
+
+        auto fixed = filter->GetFixedImage();
+        auto moving = filter->GetMovingImage();
+
+        typename DuplicatorType::Pointer duplicator = DuplicatorType::New();
+        duplicator->SetInputImage(fixed);
+        duplicator->Update();
+        typename ImageType::Pointer clonedFixed = duplicator->GetOutput();
+
+        duplicator->SetInputImage(moving);
+        duplicator->Update();
+        typename ImageType::Pointer clonedMoving = duplicator->GetOutput();
+
+        auto deformation = fieldToImage<typename RegistrationFilterType::RegistrationFunctionType>(clonedFixed, clonedMoving, field);
+        typename ExtractFilterType::Pointer extractFilter = ExtractFilterType::New();
+        extractFilter->SetDirectionCollapseToSubmatrix();
+        typename ImageType::RegionType inputRegion = deformation->GetBufferedRegion();
+        typename ImageType::SizeType   size = inputRegion.GetSize();
+        size[2] = 0; // we extract along z direction
+        typename ImageType::IndexType start = inputRegion.GetIndex();
+        start[2] = 0 ;
+        typename ImageType::RegionType desiredRegion;
+        desiredRegion.SetSize(size);
+        desiredRegion.SetIndex(start);
+        extractFilter->SetExtractionRegion(desiredRegion);
+        extractFilter->SetInput(deformation);
+        extractFilter->Update();
+        typename ImageType2D::Pointer deformation2D = extractFilter->GetOutput();
+        m_JoinDeformation->PushBackInput(deformation2D);
+
+        ImageTypeU2D::Pointer acc = computeAccumulationImage<ImageTypeU2D, ImageVector>(field);
+        m_JoinAcc->PushBackInput(acc.GetPointer());
     }
 
     void Execute(const itk::Object * object, const itk::EventObject & event) override
@@ -182,7 +241,8 @@ public:
     }
 
 private:
-    ImagePointer m_Image;
+    JoinSeriesAccFilter::Pointer m_JoinAcc;
+    typename JoinSeriesDeformationFilter::Pointer m_JoinDeformation;
 };
 
 void PrintHelp()
@@ -594,10 +654,11 @@ int main( int argc, char *argv[] )
 
 
     using ImageType = Image<short, DIMENSION>;
-    using ImageType2D = itk::Image<unsigned char, 2>;
+    using ImageTypeAcc = Image<unsigned char, DIMENSION>;
     using ImagePointerType = ImageType::Pointer;
     using ImageReaderType = ImageFileReader<ImageType>;
     using ImageWriterType = ImageFileWriter<ImageType>;
+    using ImageAccWriterType = ImageFileWriter<ImageTypeAcc>;
 
     using MaskType = VariationalRegistrationFunction<ImageType,ImageType,DisplacementFieldType>::MaskImageType;
     using MaskPointerType = MaskType::Pointer;
@@ -623,7 +684,6 @@ int main( int argc, char *argv[] )
     fixedImageReader->SetFileName( fixedImageFilename );
     fixedImageReader->Update();
     fixedImage = fixedImageReader->GetOutput();
-
     std::cout << "Loading moving image ... " << std::endl;
     ImageReaderType::Pointer movingImageReader;
     movingImageReader = ImageReaderType::New();
@@ -794,7 +854,6 @@ int main( int argc, char *argv[] )
     //function->SetMovingImageWarper( warper );
     function->SetTimeStep( timestep );
 
-
     //
     // Setup regularizer
     //
@@ -930,9 +989,7 @@ int main( int argc, char *argv[] )
         stopCriterion->SetMultiResolutionPolicyToDefault();
         break;
     }
-    CommandIterationUpdate<RegistrationFilterType, ImageType>::Pointer observer = CommandIterationUpdate<RegistrationFilterType, ImageType>::New();
-    ImageType::Pointer image = ImageType::New();
-    observer->SetImage(image);
+    CommandIterationUpdate<RegistrationFilterType>::Pointer observer = CommandIterationUpdate<RegistrationFilterType>::New();
 
     regFilter->AddObserver( itk::IterationEvent(), stopCriterion );
     regFilter->AddObserver( itk::IterationEvent(), observer);
@@ -969,13 +1026,19 @@ int main( int argc, char *argv[] )
 
     DisplacementFieldType::Pointer outputDisplacementField = mrRegFilter->GetDisplacementField();
 
-    ImageType2D::Pointer accumulationMap = computeAccumulationImage<ImageType2D, DisplacementFieldType>(outputDisplacementField);
-    ImageFileWriter<ImageType2D>::Pointer ImageWriter;
-    ImageWriter = ImageFileWriter<ImageType2D>::New();
+    ImageTypeAcc::Pointer accumulationMap = observer->GetOutput();
+    ImageType::Pointer deformation = observer->GetDeformation();
 
-    ImageWriter->SetInput( accumulationMap );
-    ImageWriter->SetFileName( "/mnt/d/Registration/acc.tif" );
+    ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
+    ImageWriter->SetInput( deformation );
+    ImageWriter->SetFileName( "/mnt/d/Registration/deformation.tif" );
     ImageWriter->Update();
+
+
+    ImageAccWriterType::Pointer ImageWriterAcc = ImageAccWriterType::New();
+    ImageWriterAcc->SetInput( accumulationMap );
+    ImageWriterAcc->SetFileName( "/mnt/d/Registration/acc.tif" );
+    ImageWriterAcc->Update();
 
     if( searchSpace == 1 || searchSpace == 2 )
     {
@@ -1078,24 +1141,25 @@ int main( int argc, char *argv[] )
 
     if( warpedImageFilename != nullptr )
     {
-        using MovingImageWarperType = FunctionType::MovingImageWarperType;
-        using InterpolatorType =
-            itk::NearestNeighborInterpolateImageFunction<ImageType, double>;
-        MovingImageWarperType::Pointer warper = MovingImageWarperType::New();
-        InterpolatorType::Pointer interpolator = InterpolatorType::New();
+        // using MovingImageWarperType = FunctionType::MovingImageWarperType;
+        // using InterpolatorType =
+        //     itk::NearestNeighborInterpolateImageFunction<ImageType, double>;
+        // MovingImageWarperType::Pointer warper = MovingImageWarperType::New();
+        // InterpolatorType::Pointer interpolator = InterpolatorType::New();
 
-        warper->SetInput( movingImage );
-        warper->SetOutputParametersFromImage( fixedImage );
-        warper->SetInterpolator(interpolator);
-        warper->SetDisplacementField( outputDisplacementField );
-        warper->UpdateLargestPossibleRegion();
+        // warper->SetInput( movingImage );
+        // warper->SetOutputParametersFromImage( fixedImage );
+        // warper->SetInterpolator(interpolator);
+        // warper->SetDisplacementField( outputDisplacementField );
+        // warper->UpdateLargestPossibleRegion();
 
+        ImageType::Pointer fieldImage = fieldToImage<FunctionType>(fixedImage, movingImage, outputDisplacementField);
 
 
         ImageWriterType::Pointer imageWriter;
         imageWriter = ImageWriterType::New();
 
-        imageWriter->SetInput( warper->GetOutput() );
+        imageWriter->SetInput( fieldImage );
         imageWriter->SetFileName( warpedImageFilename );
         imageWriter->Update();
     }
