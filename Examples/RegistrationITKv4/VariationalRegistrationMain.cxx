@@ -89,6 +89,7 @@ extern "C"
 #include "itkJoinSeriesImageFilter.h"
 #include "itkImageDuplicator.h"
 #include "itkExtractImageFilter.h"
+#include "itkVectorGradientMagnitudeImageFilter.h"
 
 #include <itkMath.h>
 
@@ -144,9 +145,88 @@ typename ImageType::Pointer computeAccumulationImage(const typename Displacement
         typename DisplacementFieldType::PixelType v = it.Get();
         typename ImageType::IndexType accIndex;
         for (size_t i = 0; i < 2; i++)
-            accIndex[i] = v[i] + index3D[i];
+            accIndex[i] = index3D[i] -v[i];
+        // std::cout << index3D << " " << v << " " << accIndex << std::endl;
         if (region.IsInside(accIndex))
             im->SetPixel(accIndex, im->GetPixel(accIndex)+1);
+    }
+    return im;
+}
+
+template <typename ImageType>
+typename itk::Image<typename ImageType::ObjectType::PixelType, 2>
+convert3Dto2D(const ImageType& image) {
+    using ImageType2D = itk::Image<typename ImageType::ObjectType::PixelType, 2>;
+    using ExtractFilterType = typename itk::ExtractImageFilter<ImageType, ImageType2D>;
+
+
+    typename ExtractFilterType::Pointer extractFilter = ExtractFilterType::New();
+    extractFilter->SetDirectionCollapseToSubmatrix();
+    typename ImageType::RegionType inputRegion = image->GetBufferedRegion();
+    typename ImageType::SizeType   size = inputRegion.GetSize();
+    size[2] = 0; // we extract along z direction
+    typename ImageType::IndexType start = inputRegion.GetIndex();
+    start[2] = 0 ;
+    typename ImageType::RegionType desiredRegion;
+    desiredRegion.SetSize(size);
+    desiredRegion.SetIndex(start);
+    extractFilter->SetExtractionRegion(desiredRegion);
+    extractFilter->SetInput(image);
+    extractFilter->Update();
+    typename ImageType2D::Pointer im = extractFilter->GetOutput();
+
+    return im;
+
+}
+
+template <typename DisplacementFieldType>
+itk::Image<float, 2>::Pointer computeDivergenceImage(const typename DisplacementFieldType::Pointer& field) {
+
+    using ImageType = itk::Image<float, 3>;
+    using ImageType2D = itk::Image<float, 2>;
+
+    using GradientMagnitudeFilter =
+        itk::VectorGradientMagnitudeImageFilter<DisplacementFieldType> ;
+    using ImageIterator = itk::ImageRegionIteratorWithIndex<ImageType>;
+
+
+    typename GradientMagnitudeFilter::Pointer gradientFilter = GradientMagnitudeFilter::New();
+    gradientFilter->SetInput(field);
+    gradientFilter->Update();
+    auto outImage = gradientFilter->GetOutput();
+    std::cout << field->GetDirection() << " " << field->GetSpacing() << std::endl;
+    ImageIterator  it( outImage, outImage->GetRequestedRegion() );
+    typename ImageType2D::Pointer im = ImageType2D::New();
+    typename ImageType2D::RegionType region;
+    typename ImageType2D::IndexType  start;
+    start[0] = 0;
+    start[1] = 0;
+
+    typename ImageType2D::SizeType size;
+    size[0] = outImage->GetLargestPossibleRegion().GetSize()[0];
+    size[1] = outImage->GetLargestPossibleRegion().GetSize()[1];
+
+    region.SetSize(size);
+    region.SetIndex(start);
+
+    typename ImageType2D::SpacingType spacing;
+    spacing[0] = outImage->GetSpacing()[0];
+    spacing[1] = outImage->GetSpacing()[1];
+
+    im->SetSpacing(spacing);
+    im->SetRegions(region);
+    im->Allocate();
+    im->FillBuffer(0);
+
+    for (it.GoToBegin(); !it.IsAtEnd(); ++it){
+        typename ImageType::IndexType index3D = it.GetIndex();
+        typename ImageType::PixelType v = it.Get();
+        typename ImageType2D::IndexType accIndex;
+        for (size_t i = 0; i < 2; i++)
+            accIndex[i] = index3D[i];
+        // std::cout << index3D << " " << v << " " << accIndex << std::endl;
+        if (region.IsInside(accIndex))
+            im->SetPixel(accIndex, std::pow(v, 2));
     }
     return im;
 }
@@ -155,6 +235,8 @@ template <typename RegistrationFilterType>
 class CommandIterationUpdate : public itk::Command
 {
 public:
+    using ImageTypeFloat2D = itk::Image<float, 2>;
+    using ImageTypeFloat3D = itk::Image<float, 3>;
     using ImageTypeU2D = itk::Image<unsigned char, 2>;
     using ImageTypeU3D = itk::Image<unsigned char, 3>;
 
@@ -165,6 +247,7 @@ public:
     using Superclass = itk::Command;
     using Pointer = itk::SmartPointer<CommandIterationUpdate>;
     using JoinSeriesAccFilter = itk::JoinSeriesImageFilter<ImageTypeU2D, ImageTypeU3D>;
+     using JoinSeriesDivFilter = itk::JoinSeriesImageFilter<ImageTypeFloat2D, ImageTypeFloat3D>;
     using JoinSeriesDeformationFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
     using ExtractFilterType = itk::ExtractImageFilter<ImageType, ImageType2D>;
 
@@ -172,6 +255,7 @@ public:
 
 protected:
     CommandIterationUpdate(){
+        m_JoinDiv = JoinSeriesDivFilter::New();
         m_JoinAcc = JoinSeriesAccFilter::New();
         m_JoinDeformation = JoinSeriesDeformationFilter::New();
     };
@@ -180,10 +264,17 @@ protected:
 public:
 
     ImageTypeU3D::Pointer GetOutput() {
+        m_JoinAcc->Update();
         return m_JoinAcc->GetOutput();
     }
 
+    ImageTypeFloat3D::Pointer GetDivergence() {
+        m_JoinDiv->Update();
+        return m_JoinDiv->GetOutput();
+    }
+
     typename ImageType::Pointer GetDeformation() {
+        m_JoinDeformation->Update();
         return m_JoinDeformation->GetOutput();
     }
 
@@ -229,7 +320,9 @@ public:
         typename ImageType2D::Pointer deformation2D = extractFilter->GetOutput();
         m_JoinDeformation->PushBackInput(deformation2D);
 
+        ImageTypeFloat2D::Pointer div = computeDivergenceImage< ImageVector>(field);
         ImageTypeU2D::Pointer acc = computeAccumulationImage<ImageTypeU2D, ImageVector>(field);
+        m_JoinDiv->PushBackInput(div.GetPointer());
         m_JoinAcc->PushBackInput(acc.GetPointer());
     }
 
@@ -242,6 +335,7 @@ public:
 
 private:
     JoinSeriesAccFilter::Pointer m_JoinAcc;
+    JoinSeriesDivFilter::Pointer m_JoinDiv;
     typename JoinSeriesDeformationFilter::Pointer m_JoinDeformation;
 };
 
@@ -655,9 +749,12 @@ int main( int argc, char *argv[] )
 
     using ImageType = Image<short, DIMENSION>;
     using ImageTypeAcc = Image<unsigned char, DIMENSION>;
+    using ImageTypeFloat = Image<float, DIMENSION>;
+
     using ImagePointerType = ImageType::Pointer;
     using ImageReaderType = ImageFileReader<ImageType>;
     using ImageWriterType = ImageFileWriter<ImageType>;
+    using ImageFloatWriterType = ImageFileWriter<ImageTypeFloat>;
     using ImageAccWriterType = ImageFileWriter<ImageTypeAcc>;
 
     using MaskType = VariationalRegistrationFunction<ImageType,ImageType,DisplacementFieldType>::MaskImageType;
@@ -1027,12 +1124,18 @@ int main( int argc, char *argv[] )
     DisplacementFieldType::Pointer outputDisplacementField = mrRegFilter->GetDisplacementField();
 
     ImageTypeAcc::Pointer accumulationMap = observer->GetOutput();
+    ImageTypeFloat::Pointer divergence = observer->GetDivergence();
     ImageType::Pointer deformation = observer->GetDeformation();
 
     ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
     ImageWriter->SetInput( deformation );
     ImageWriter->SetFileName( "/mnt/d/Registration/deformation.tif" );
     ImageWriter->Update();
+
+    ImageFloatWriterType::Pointer  ImageWriterFloat = ImageFloatWriterType::New();
+    ImageWriterFloat->SetInput( divergence );
+    ImageWriterFloat->SetFileName( "/mnt/d/Registration/divergence.tif" );
+    ImageWriterFloat->Update();
 
 
     ImageAccWriterType::Pointer ImageWriterAcc = ImageAccWriterType::New();
