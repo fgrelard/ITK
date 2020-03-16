@@ -35,6 +35,7 @@
 //
 // Add -DUSE_2D_IMPL as COMPILE_FLAG to generate 2D version.
 //
+#define USE_2D_IMPL 1
 #ifdef USE_2D_IMPL
 #define DIMENSION 2
 #else
@@ -92,11 +93,19 @@ extern "C"
 #include "itkVectorGradientMagnitudeImageFilter.h"
 #include "itkVectorDivergenceImageFilter.h"
 #include "itkVectorMagnitudeVarianceImageFilter.h"
+#include "itkVectorMagnitudeImageFilter.h"
 #include "itkAbsoluteValueDifferenceImageFilter.h"
 #include "itkSubtractImageFilter.h"
 #include "itkMultiplyImageFilter.h"
 #include "itkGradientImageFilter.h"
 #include "itkCovariantVector.h"
+#include "itkValuedRegionalMaximaImageFilter.h"
+#include "itkValuedRegionalMinimaImageFilter.h"
+#include "itkValuedRadiusRegionalExtremaImageFilter.h"
+#include "itkWatershedImageFilter.h"
+#include "itkCastImageFilter.h"
+#include "itkConstNeighborhoodIterator.h"
+
 #include <itkMath.h>
 
 using namespace itk;
@@ -308,9 +317,9 @@ public:
     using Superclass = itk::Command;
     using Pointer = itk::SmartPointer<CommandIterationUpdate>;
     using ImageTypeGradient2D = itk::Image<itk::CovariantVector<float, 2>, 2>;
-
-    using ImageTypeVector2D = itk::Image<itk::CovariantVector<float, 3>, 2>;
-    using ImageTypeVector3D = itk::Image<itk::CovariantVector<float, 3>, 3>;
+    using ImageTypeWatershed = itk::Image<unsigned long, 2>;
+    using ImageTypeVector2D = itk::Image<itk::Vector<float, 3>, 2>;
+    using ImageTypeVector3D = itk::Image<itk::Vector<float, 3>, 3>;
     using JoinSeriesAccFilter = itk::JoinSeriesImageFilter<ImageTypeVector2D, ImageTypeVector3D>;
      using JoinSeriesDivFilter = itk::JoinSeriesImageFilter<ImageTypeFloat2D, ImageTypeFloat3D>;
     using JoinSeriesDeformationFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
@@ -352,6 +361,12 @@ public:
 
         using MultiplyFilter = itk::MultiplyImageFilter<ImageTypeFloat3D>;
         using GradientFilter = itk::GradientImageFilter<ImageTypeFloat3D>;
+        using LocalMaximaFilter = itk::ValuedRegionalMaximaImageFilter<ImageTypeFloat2D, ImageTypeFloat2D>;
+        using LocalMinimaFilter = itk::ValuedRegionalMinimaImageFilter<ImageTypeFloat2D, ImageTypeFloat2D>;
+        using RadiusLocalMinimaFilter = itk::ValuedRadiusRegionalExtremaImageFilter<ImageTypeFloat2D, ImageTypeFloat2D, std::less<typename ImageTypeFloat2D::PixelType>, std::less<typename ImageTypeFloat2D::PixelType> >;
+        using MagnitudeImageFilter = itk::VectorMagnitudeImageFilter<ImageVector, ImageTypeFloat3D>;
+        using WatershedFilterType = itk::WatershedImageFilter<ImageTypeFloat2D>;
+
         auto * filter = static_cast<RegistrationFilterType * >(caller);
         if (!(itk::IterationEvent().CheckEvent(&event)))
         {
@@ -359,7 +374,7 @@ public:
         }
         using FunctionType = typename RegistrationFilterType::RegistrationFunctionType;
         FunctionType* function = dynamic_cast<FunctionType*>(filter->GetDifferenceFunction().GetPointer());
-        std::cout << function->GetTimeStep() << std::endl;
+        std::cout << "Timestep=" << function->GetTimeStep() << std::endl;
 
         typename ImageVector::Pointer field = filter->GetDisplacementField();
 
@@ -392,6 +407,38 @@ public:
         typename ImageType2D::Pointer deformation2D = extractFilter->GetOutput();
 
         ImageTypeFloat2D::Pointer div = computeDivergenceImage< ImageVector>(field);
+        typename MagnitudeImageFilter::Pointer magFilter = MagnitudeImageFilter::New();
+        magFilter->SetInput(field);
+        magFilter->Update();
+        ImageTypeFloat3D::Pointer magnitude = magFilter->GetOutput();
+        ImageTypeFloat2D::Pointer magnitude2D = convert3Dto2D(magnitude);
+        // WatershedFilterType::Pointer watershedFilter = WatershedFilterType::New();
+        // watershedFilter->SetInput(magnitude2D);
+        // watershedFilter->SetLevel(0.1);
+        // watershedFilter->Update();
+        // ImageTypeWatershed::Pointer watershed = watershedFilter->GetOutput();
+        // using CastFilterWatershed = itk::CastImageFilter<ImageTypeWatershed, ImageTypeFloat2D>;
+        // CastFilterWatershed::Pointer castFilter = CastFilterWatershed::New();
+        // castFilter->SetInput(watershed);
+        // castFilter->Update();
+        // ImageTypeFloat2D::Pointer watershedFloat = castFilter->GetOutput();
+
+        RadiusLocalMinimaFilter::Pointer localMaxFilter = RadiusLocalMinimaFilter::New();
+        // LocalMinimaFilter::Pointer localMaxFilter = LocalMinimaFilter::New();
+
+
+        using IteratorType = itk::ConstNeighborhoodIterator<ImageTypeFloat2D>;
+        typename IteratorType::RadiusType radius;
+        radius.Fill(2);
+
+        IteratorType iterator(radius, magnitude2D, magnitude2D->GetLargestPossibleRegion());
+        std::cout << iterator.Size() << std::endl;
+        int cpt = 0;
+        std::cout << cpt << std::endl;
+        localMaxFilter->SetRadius(3);
+        localMaxFilter->SetInput(magnitude2D);
+        localMaxFilter->Update();
+
 
         if (m_PreviousDivergenceImage) {
             typename SubtractFilter::Pointer subFilter = SubtractFilter::New();
@@ -407,16 +454,18 @@ public:
             multFilter->Update();
             gradientFilter->SetInput(multFilter->GetOutput());
             gradientFilter->Update();
-            ImageTypeVector3D::Pointer grad = gradientFilter->GetOutput();
-            ImageTypeVector2D::Pointer grad2D = convert3Dto2D(grad);
-            // ImageTypeVector3D grad3D = convert2Dto3D(grad);
-            m_JoinAcc->PushBackInput(grad2D);
+            // ImageTypeVector3D::Pointer grad = gradientFilter->GetOutput();
+            // ImageTypeVector2D::Pointer grad2D = convert3Dto2D(grad);
+            // m_JoinAcc->PushBackInput(grad2D);
+            ImageTypeVector2D::Pointer field2D = convert3Dto2D(field);
+            m_JoinAcc->PushBackInput(field2D.GetPointer());
 
         }
 
         ImageTypeU2D::Pointer acc = computeAccumulationImage<ImageTypeU2D, ImageVector>(field);
         m_JoinDeformation->PushBackInput(deformation2D);
-        m_JoinDiv->PushBackInput(div.GetPointer());
+        // m_JoinDiv->PushBackInput(div.GetPointer());
+        m_JoinDiv->PushBackInput(localMaxFilter->GetOutput());
         // m_JoinAcc->PushBackInput(acc.GetPointer());
         m_PreviousDivergenceImage = div;
     }
@@ -846,7 +895,7 @@ int main( int argc, char *argv[] )
 
 
     using ImageType = Image<short, DIMENSION>;
-    using ImageTypeAcc = Image<itk::CovariantVector<float, 3>, DIMENSION>;
+    using ImageTypeAcc = Image<itk::Vector<float, 3>, DIMENSION>;
     using ImageTypeFloat = Image<float, DIMENSION>;
 
     using ImagePointerType = ImageType::Pointer;
@@ -1183,10 +1232,10 @@ int main( int argc, char *argv[] )
         stopCriterion->SetMultiResolutionPolicyToDefault();
         break;
     }
-    CommandIterationUpdate<RegistrationFilterType>::Pointer observer = CommandIterationUpdate<RegistrationFilterType>::New();
+    // CommandIterationUpdate<RegistrationFilterType>::Pointer observer = CommandIterationUpdate<RegistrationFilterType>::New();
 
     regFilter->AddObserver( itk::IterationEvent(), stopCriterion );
-    regFilter->AddObserver( itk::IterationEvent(), observer);
+    // regFilter->AddObserver( itk::IterationEvent(), observer);
     mrRegFilter->AddObserver( itk::IterationEvent(), stopCriterion );
     mrRegFilter->AddObserver( itk::InitializeEvent(), stopCriterion );
 
@@ -1220,25 +1269,25 @@ int main( int argc, char *argv[] )
 
     DisplacementFieldType::Pointer outputDisplacementField = mrRegFilter->GetDisplacementField();
 
-    ImageTypeAcc::Pointer accumulationMap = observer->GetOutput();
-    ImageTypeFloat::Pointer divergence = observer->GetDivergence();
-    ImageType::Pointer deformation = observer->GetDeformation();
+    // ImageTypeAcc::Pointer accumulationMap = observer->GetOutput();
+    // ImageTypeFloat::Pointer divergence = observer->GetDivergence();
+    // ImageType::Pointer deformation = observer->GetDeformation();
 
-    ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
-    ImageWriter->SetInput( deformation );
-    ImageWriter->SetFileName( "/mnt/d/Registration/deformation.tif" );
-    ImageWriter->Update();
+    // ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
+    // ImageWriter->SetInput( deformation );
+    // ImageWriter->SetFileName( "/mnt/d/Registration/deformation.tif" );
+    // ImageWriter->Update();
 
-    ImageFloatWriterType::Pointer  ImageWriterFloat = ImageFloatWriterType::New();
-    ImageWriterFloat->SetInput( divergence );
-    ImageWriterFloat->SetFileName( "/mnt/d/Registration/divergence.tif" );
-    ImageWriterFloat->Update();
+    // ImageFloatWriterType::Pointer  ImageWriterFloat = ImageFloatWriterType::New();
+    // ImageWriterFloat->SetInput( divergence );
+    // ImageWriterFloat->SetFileName( "/mnt/d/Registration/divergence.tif" );
+    // ImageWriterFloat->Update();
 
 
-    ImageAccWriterType::Pointer ImageWriterAcc = ImageAccWriterType::New();
-    ImageWriterAcc->SetInput( accumulationMap );
-    ImageWriterAcc->SetFileName( "/mnt/d/Registration/acc.mha" );
-    ImageWriterAcc->Update();
+    // ImageAccWriterType::Pointer ImageWriterAcc = ImageAccWriterType::New();
+    // ImageWriterAcc->SetInput( accumulationMap );
+    // ImageWriterAcc->SetFileName( "/mnt/d/Registration/acc.mha" );
+    // ImageWriterAcc->Update();
 
     if( searchSpace == 1 || searchSpace == 2 )
     {
@@ -1252,7 +1301,7 @@ int main( int argc, char *argv[] )
     //////////////////////////////////////////////
     std::cout << "==========================================" << std::endl;
     std::cout << "WRITING output data..." << std::endl;
-
+    std::cout << bWrite3DDisplacementField << std::endl;
     if( outputDisplacementFilename != nullptr && outputDisplacementField.IsNotNull() )
     {
         if( DIMENSION == 2 && bWrite3DDisplacementField )
