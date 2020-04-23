@@ -68,8 +68,9 @@ add_executable(DeformableRegistration8 DeformableRegistration8.cxx )
 target_link_libraries(DeformableRegistration8 ${ITK_LIBRARIES})
 
 if( ITK_USE_FFTWD AND NOT ITK_USE_CUFFTW )
+  include_directories(BEFORE ${ITK_INCLUDE_DIRS} )
   add_executable(VariationalRegistrationMain VariationalRegistrationMain.cxx)
-  target_link_libraries(VariationalRegistrationMain ${ITK_LIBRARIES})
+  target_link_libraries(VariationalRegistrationMain ${ITK_LIBRARIES} )
 
   add_executable(DeformableRegistration9 DeformableRegistration9.cxx )
   target_link_libraries(DeformableRegistration9 ${ITK_LIBRARIES})
