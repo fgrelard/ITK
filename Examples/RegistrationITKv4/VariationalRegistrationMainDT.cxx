@@ -72,6 +72,7 @@ extern "C"
 
 #include "itkNearestNeighborInterpolateImageFunction.h"
 #include "itkBinaryMorphologicalOpeningImageFilter.h"
+#include "itkBinaryFillholeImageFilter.h"
 
 #include "itkVariationalRegistrationRegularizer.h"
 #include "itkVariationalRegistrationGaussianRegularizer.h"
@@ -103,6 +104,10 @@ extern "C"
 #include <itkMath.h>
 #include "itkMinimumMaximumImageFilter.h"
 
+#include "itkVectorMagnitudeVarianceImageFilter.h"
+#include "itkVectorDivergenceImageFilter.h"
+#include "itkVariationalRegistrationSSDMissingCorrespondenceFunction.h"
+
 using namespace itk;
 
 template <typename FunctionType, typename ImageType, typename DisplacementFieldType>
@@ -122,6 +127,53 @@ ImageType fieldToImage(const ImageType& fixedImage, const ImageType& movingImage
 
 }
 
+template <typename DisplacementFieldType>
+itk::Image<float, 3>::Pointer computeDivergenceImage(const typename DisplacementFieldType::Pointer& field) {
+
+    using ImageType = itk::Image<float, 3>;
+
+    using DivergenceFilter =
+        itk::VectorDivergenceImageFilter<DisplacementFieldType> ;
+    using VarianceFilter =
+        itk::VectorMagnitudeVarianceImageFilter<DisplacementFieldType>;
+    using ImageIterator = itk::ImageRegionIteratorWithIndex<ImageType>;
+    using DuplicatorType = itk::ImageDuplicator<ImageType>;
+
+
+    typename DivergenceFilter::Pointer gradientFilter = DivergenceFilter::New();
+    gradientFilter->SetUsePrincipleComponentsOff();
+    gradientFilter->SetUseImageSpacingOn();
+    gradientFilter->SetInput(field);
+    gradientFilter->Update();
+
+    typename VarianceFilter::Pointer magnitudeFilter = VarianceFilter::New();
+    magnitudeFilter->SetUsePrincipleComponentsOff();
+    magnitudeFilter->SetUseImageSpacingOn();
+    magnitudeFilter->SetInput(field);
+    magnitudeFilter->Update();
+    ImageType::Pointer gradientImage = gradientFilter->GetOutput();
+    ImageType::Pointer magnitudeImage = magnitudeFilter->GetOutput();
+
+    typename DuplicatorType::Pointer duplicator = DuplicatorType::New();
+    duplicator->SetInputImage(gradientImage);
+    duplicator->Update();
+    typename ImageType::Pointer clonedImage = duplicator->GetOutput();
+
+    ImageIterator  it( clonedImage, clonedImage->GetRequestedRegion() );
+    it.GoToBegin();
+    while( !it.IsAtEnd() )
+    {
+
+        typename ImageType::IndexType index3D = it.GetIndex();
+        typename ImageType::PixelType g = it.Get();
+        typename ImageType::PixelType m = magnitudeImage->GetPixel(index3D);
+        it.Set( g*m );
+        ++it;
+    }
+    return clonedImage;
+}
+
+
 template <typename RegistrationFilterType>
 class CommandIterationUpdate : public itk::Command
 {
@@ -138,6 +190,7 @@ public:
     using Superclass = itk::Command;
     using Pointer = itk::SmartPointer<CommandIterationUpdate>;
     using JoinSeriesDeformationFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
+    using JoinSeriesDivFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
     using ExtractFilterType = itk::ExtractImageFilter<ImageType, ImageType2D>;
 
     itkNewMacro(CommandIterationUpdate);
@@ -145,6 +198,8 @@ public:
 protected:
     CommandIterationUpdate(){
         m_JoinDeformation = JoinSeriesDeformationFilter::New();
+        m_JoinDiv = JoinSeriesDivFilter::New();
+
     };
 
 
@@ -157,6 +212,12 @@ public:
         return m_JoinDeformation->GetOutput();
     }
 
+    typename ImageType::Pointer GetDivergence() {
+        m_JoinDiv->Update();
+        return m_JoinDiv->GetOutput();
+    }
+
+
     void Execute(itk::Object * caller, const itk::EventObject & event) override
     {
         using DuplicatorType = itk::ImageDuplicator<ImageType>;
@@ -168,7 +229,8 @@ public:
             return;
         }
         // using FunctionType = typename RegistrationFilterType::RegistrationFunctionType;
-        // FunctionType* function = dynamic_cast<FunctionType*>(filter->GetDifferenceFunction().GetPointer());
+        using FunctionType =  VariationalRegistrationSSDMissingCorrespondenceFunction<ImageType, ImageType, typename RegistrationFilterType::DisplacementFieldType>;
+        FunctionType* function = dynamic_cast<FunctionType*>(filter->GetDifferenceFunction().GetPointer());
 
         typename ImageVector::Pointer field = filter->GetDisplacementField();
 
@@ -184,6 +246,9 @@ public:
         typename ImageType::Pointer clonedMoving = duplicator->GetOutput();
 
         auto deformation = fieldToImage<typename RegistrationFilterType::RegistrationFunctionType>(clonedFixed, clonedMoving, field);
+        // auto divergence = computeDivergenceImage<ImageVector>(field);
+
+        auto divergence = function->GetWeightImage();
 
         typename ExtractFilterType::Pointer extractFilter = ExtractFilterType::New();
         extractFilter->SetDirectionCollapseToSubmatrix();
@@ -200,8 +265,13 @@ public:
         extractFilter->SetInput(deformation);
         extractFilter->Update();
         typename ImageType2D::Pointer deformation2D = extractFilter->GetOutput();
+
+        extractFilter->SetInput(divergence);
+        extractFilter->Update();
+        typename ImageType2D::Pointer div = extractFilter->GetOutput();
         if (inputRegion.GetSize()[0] == 100) {
             m_JoinDeformation->PushBackInput(deformation2D);
+            m_JoinDiv->PushBackInput(div.GetPointer());
         }
     }
 
@@ -214,6 +284,8 @@ public:
 
 private:
     typename JoinSeriesDeformationFilter::Pointer m_JoinDeformation;
+    typename JoinSeriesDivFilter::Pointer m_JoinDiv;
+
 };
 
 void PrintHelp()
@@ -276,11 +348,12 @@ void PrintHelp()
   std::cout << "    -b <lambda>              Lambda for the regularization (only elasic)." << std::endl;
   std::cout << std::endl;
   std::cout << "  Parameters for registration function:" << std::endl;
-  std::cout << "    -f 0|1|2                 Select force term." << std::endl;
+  std::cout << "    -f 0|1|2|3|4             Select force term." << std::endl;
   std::cout << "                               0: Demon forces (default)." << std::endl;
   std::cout << "                               1: Sum of Squared Differences." << std::endl;
   std::cout << "                               2: Normalized Cross Correlation." << std::endl;
   std::cout << "                               3: Distance transform sum of squared differences." << std::endl;
+  std::cout << "                               4: SSD with missing correspondences." << std::endl;
   std::cout << "    -q <radius>              Radius of neighborhood size for Normalized Cross Correlation." << std::endl;
   std::cout << "    -d 0|1|2                 Select image domain for force calculation." << std::endl;
   std::cout << "                               0: Warped image forces (default)." << std::endl;
@@ -305,19 +378,18 @@ void PrintHelp()
 }
 
 template <typename ImageTypePointer>
-ImageTypePointer ComputeDT(const ImageTypePointer& image, bool fullMask=false) {
+ImageTypePointer ComputeDT(const ImageTypePointer& image, bool fullMask=false, bool fillHoles=false) {
     using ImageType = typename ImageTypePointer::ObjectType;
     using ImageUnsignedCharType = itk::Image<unsigned char, ImageType::ImageDimension>;
 
-
+    using BinaryFilterType = itk::BinaryThresholdImageFilter<ImageType, ImageUnsignedCharType>;
     typename ImageUnsignedCharType::Pointer binaryImage = ImageUnsignedCharType::New();
     if (fullMask) {
-        using BinaryFilterType = itk::BinaryThresholdImageFilter<ImageType, ImageUnsignedCharType>;
         typename BinaryFilterType::Pointer binary = BinaryFilterType::New();
         binary->SetInput(image);
         binary->SetLowerThreshold(0.01);
-        binary->SetInsideValue(0);
-        binary->SetOutsideValue(255);
+        binary->SetInsideValue(255);
+        binary->SetOutsideValue(0);
         binary->Update();
         binaryImage = binary->GetOutput();
     }
@@ -327,38 +399,53 @@ ImageTypePointer ComputeDT(const ImageTypePointer& image, bool fullMask=false) {
         typename IntermodesFilterType::Pointer intermodes = IntermodesFilterType::New();
         intermodes->SetInput(image);
         intermodes->SetUseInterMode(false);
-        intermodes->SetOutsideValue(0);
-        intermodes->SetInsideValue(255);
+        intermodes->SetOutsideValue(255);
+        intermodes->SetInsideValue(0);
         intermodes->Update();
         std:: cout << "threshold=" << intermodes->GetThreshold() << std::endl;
         binaryImage = intermodes->GetOutput();
     }
 
+    if (fillHoles) {
+        std::cout << "Filling holes " << std::endl;
+        using BinaryFillHolesFilter = itk::BinaryFillholeImageFilter<ImageUnsignedCharType>;
+        typename BinaryFillHolesFilter::Pointer fill = BinaryFillHolesFilter::New();
+        fill->SetInput(binaryImage);
+        fill->SetForegroundValue(255);
+        fill->SetFullyConnected(false);
+        fill->Update();
+        binaryImage = fill->GetOutput();
+        // using StructuringElementType = itk::FlatStructuringElement<DIMENSION>;
+        // StructuringElementType::RadiusType radius;
+        // radius.Fill(1.0);
+        // radius[2] = 0;
 
-    using RescaleTypeUF = itk::RescaleIntensityImageFilter<ImageUnsignedCharType, ImageType>;
+        // StructuringElementType structuringElement = StructuringElementType::Ball(radius);
 
+        // using MorphologicalFilterType =
+        //     itk::BinaryMorphologicalOpeningImageFilter<ImageUnsignedCharType, ImageUnsignedCharType, StructuringElementType>;
+        // typename MorphologicalFilterType::Pointer openingFilter = MorphologicalFilterType::New();
+        // openingFilter->SetInput(binaryImage);
+        // openingFilter->SetKernel(structuringElement);
+        // openingFilter->Update();
+        // binaryImage = openingFilter->GetOutput();
+    }
+    using BinaryUChar = itk::BinaryThresholdImageFilter<ImageUnsignedCharType, ImageUnsignedCharType>;
 
-    using StructuringElementType = itk::FlatStructuringElement<DIMENSION>;
-    StructuringElementType::RadiusType radius;
-    radius.Fill(1.0);
-    radius[2] = 0;
-
-    StructuringElementType structuringElement = StructuringElementType::Ball(radius);
-
-    using MorphologicalFilterType =
-        itk::BinaryMorphologicalOpeningImageFilter<ImageUnsignedCharType, ImageUnsignedCharType, StructuringElementType>;
-    typename MorphologicalFilterType::Pointer openingFilter = MorphologicalFilterType::New();
-    openingFilter->SetInput(binaryImage);
-    openingFilter->SetKernel(structuringElement);
-    openingFilter->Update();
-    binaryImage = openingFilter->GetOutput();
+    typename BinaryUChar::Pointer binaryUC = BinaryUChar::New();
+    binaryUC->SetInput(binaryImage);
+    binaryUC->SetLowerThreshold(1);
+    binaryUC->SetInsideValue(0);
+    binaryUC->SetOutsideValue(255);
+    binaryUC->Update();
+    auto revertBinary = binaryUC->GetOutput();
 
 
     using DanielssonDistanceMapImageFilter =
         itk::DanielssonDistanceMapImageFilter<ImageUnsignedCharType, ImageType>;
     typename DanielssonDistanceMapImageFilter::Pointer distanceMapImageFilter =
         DanielssonDistanceMapImageFilter::New();
-    distanceMapImageFilter->SetInput(binaryImage);
+    distanceMapImageFilter->SetInput(revertBinary);
     distanceMapImageFilter->UseImageSpacingOn();
     distanceMapImageFilter->Update();
     typename ImageType::Pointer distanceMap = distanceMapImageFilter->GetOutput();
@@ -611,6 +698,10 @@ int main( int argc, char *argv[] )
       {
         std::cout << "  Force type:                      DT SSD" << std::endl;
       }
+      else if (forceType == 4)
+      {
+        std::cout << "  Force type:                      Missing correspondences" << std::endl;
+      }
       else
       {
         ExceptionMacro( "Force type unknown!" );
@@ -757,7 +848,7 @@ int main( int argc, char *argv[] )
   fixedImageReader->Update();
   fixedImage = fixedImageReader->GetOutput();
   fixedImage->SetSpacing(spacing);
-  fixedImage = ComputeDT(fixedImage);
+  fixedImage = ComputeDT(fixedImage, false, true);
   // fixedImage = InvertDT(fixedImage);
   std::cout << "Fixed spacing=" << fixedImage->GetSpacing() << std::endl;
 
@@ -770,7 +861,7 @@ int main( int argc, char *argv[] )
   movingImage = movingImageReader->GetOutput();
   auto movingImageOriginal = movingImageReader->GetOutput();
   movingImage->SetSpacing(spacing);
-  movingImage = ComputeDT(movingImage, true);
+  movingImage = ComputeDT(movingImage, true, true);
   // movingImage = InvertDT(movingImage);
   std::cout << "Moving spacing=" << movingImage->GetSpacing() << std::endl;
 
@@ -865,6 +956,7 @@ int main( int argc, char *argv[] )
   using NCCFunctionType = VariationalRegistrationFastNCCFunction<
       ImageType, ImageType, DisplacementFieldType>;
   using DTSSDFunctionType = VariationalRegistrationDTSSDFunction< ImageType, ImageType, DisplacementFieldType>;
+  using MissingCorrespondenceFunctionType = VariationalRegistrationSSDMissingCorrespondenceFunction< ImageType, ImageType, DisplacementFieldType>;
 
   FunctionType::Pointer function;
   switch( forceType )
@@ -949,6 +1041,25 @@ int main( int argc, char *argv[] )
     }
 
   function = dtSsdFunction;
+  }
+  break;
+   case 4:
+  {
+    MissingCorrespondenceFunctionType::Pointer missingCorrespondenceFunction = MissingCorrespondenceFunctionType::New();
+    switch( forceDomain )
+    {
+    case 0:
+      missingCorrespondenceFunction->SetGradientTypeToWarpedMovingImage();
+      break;
+    case 1:
+      missingCorrespondenceFunction->SetGradientTypeToFixedImage();
+      break;
+    case 2:
+      missingCorrespondenceFunction->SetGradientTypeToSymmetric();
+      break;
+    }
+
+  function = missingCorrespondenceFunction;
   }
   break;
   }
@@ -1130,10 +1241,23 @@ int main( int argc, char *argv[] )
 
   DisplacementFieldType::ConstPointer outputDisplacementField = mrRegFilter->GetDisplacementField();
   ImageType::Pointer deformation = observer->GetDeformation();
+  ImageType::Pointer divergence = observer->GetDivergence();
   std::cout << deformation->GetLargestPossibleRegion().GetSize() << std::endl;
   ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
+
+  std::string str(outputDisplacementFilename);
+  std::string path = str.substr(0, str.find_last_of("/"));
+  std::string sep = "/";
+  ImageWriter->SetInput( movingImage );
+  ImageWriter->SetFileName( path + sep + "moving.tif" );
+  ImageWriter->Update();
   ImageWriter->SetInput( fixedImage );
-  ImageWriter->SetFileName( "/mnt/d/new_images/Registration/250/Grain3_Xyl/variational/deformation.tif" );
+  ImageWriter->SetFileName( path + sep + "fixed.tif" );
+  ImageWriter->Update();
+  ImageWriter->SetInput( deformation );
+  ImageWriter->SetFileName( path + sep + "deformation.tif" );
+  ImageWriter->Update();
+  ImageWriter->SetFileName( path + sep + "divergence.tif" );
   ImageWriter->Update();
   if( searchSpace == 1 || searchSpace == 2 )
   {

@@ -35,7 +35,6 @@
 //
 // Add -DUSE_2D_IMPL as COMPILE_FLAG to generate 2D version.
 //
-#define USE_2D_IMPL 1
 #ifdef USE_2D_IMPL
 #define DIMENSION 2
 #else
@@ -464,8 +463,8 @@ public:
 
         ImageTypeU2D::Pointer acc = computeAccumulationImage<ImageTypeU2D, ImageVector>(field);
         m_JoinDeformation->PushBackInput(deformation2D);
-        // m_JoinDiv->PushBackInput(div.GetPointer());
-        m_JoinDiv->PushBackInput(localMaxFilter->GetOutput());
+        m_JoinDiv->PushBackInput(div.GetPointer());
+        // m_JoinDiv->PushBackInput(localMaxFilter->GetOutput());
         // m_JoinAcc->PushBackInput(acc.GetPointer());
         m_PreviousDivergenceImage = div;
     }
@@ -1232,10 +1231,10 @@ int main( int argc, char *argv[] )
         stopCriterion->SetMultiResolutionPolicyToDefault();
         break;
     }
-    // CommandIterationUpdate<RegistrationFilterType>::Pointer observer = CommandIterationUpdate<RegistrationFilterType>::New();
+    CommandIterationUpdate<RegistrationFilterType>::Pointer observer = CommandIterationUpdate<RegistrationFilterType>::New();
 
     regFilter->AddObserver( itk::IterationEvent(), stopCriterion );
-    // regFilter->AddObserver( itk::IterationEvent(), observer);
+    regFilter->AddObserver( itk::IterationEvent(), observer);
     mrRegFilter->AddObserver( itk::IterationEvent(), stopCriterion );
     mrRegFilter->AddObserver( itk::InitializeEvent(), stopCriterion );
 
@@ -1270,7 +1269,7 @@ int main( int argc, char *argv[] )
     DisplacementFieldType::Pointer outputDisplacementField = mrRegFilter->GetDisplacementField();
 
     // ImageTypeAcc::Pointer accumulationMap = observer->GetOutput();
-    // ImageTypeFloat::Pointer divergence = observer->GetDivergence();
+    ImageTypeFloat::Pointer divergence = observer->GetDivergence();
     // ImageType::Pointer deformation = observer->GetDeformation();
 
     // ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
@@ -1278,10 +1277,10 @@ int main( int argc, char *argv[] )
     // ImageWriter->SetFileName( "/mnt/d/Registration/deformation.tif" );
     // ImageWriter->Update();
 
-    // ImageFloatWriterType::Pointer  ImageWriterFloat = ImageFloatWriterType::New();
-    // ImageWriterFloat->SetInput( divergence );
-    // ImageWriterFloat->SetFileName( "/mnt/d/Registration/divergence.tif" );
-    // ImageWriterFloat->Update();
+    ImageFloatWriterType::Pointer  ImageWriterFloat = ImageFloatWriterType::New();
+    ImageWriterFloat->SetInput( divergence );
+    ImageWriterFloat->SetFileName( "/mnt/d/new_images/Registration/250/Grain3_Xyl/variational/divergence.tif" );
+    ImageWriterFloat->Update();
 
 
     // ImageAccWriterType::Pointer ImageWriterAcc = ImageAccWriterType::New();

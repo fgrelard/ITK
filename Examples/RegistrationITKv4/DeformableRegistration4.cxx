@@ -111,7 +111,7 @@ main(int argc, char * argv[])
 
   // Software Guide : BeginCodeSnippet
   const unsigned int     SpaceDimension = ImageDimension;
-  constexpr unsigned int SplineOrder = 3;
+  constexpr unsigned int SplineOrder = 2;
   using CoordinateRepType = double;
 
   using TransformType =
@@ -175,7 +175,7 @@ main(int argc, char * argv[])
 
   InitializerType::Pointer transformInitializer = InitializerType::New();
 
-  unsigned int numberOfGridNodesInOneDimension = 8;
+  unsigned int numberOfGridNodesInOneDimension = 25;
 
   TransformType::MeshSizeType meshSize;
   meshSize.Fill(numberOfGridNodesInOneDimension - SplineOrder);
