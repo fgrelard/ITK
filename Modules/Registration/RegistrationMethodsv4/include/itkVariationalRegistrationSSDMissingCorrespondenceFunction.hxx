@@ -30,6 +30,9 @@
 #include "itkVectorDivergenceImageFilter.h"
 #include "itkGaussianOperator.h"
 #include "itkNeighborhoodInnerProduct.h"
+#include "itkAbsImageFilter.h"
+
+#include <algorithm>
 
 namespace itk
 {
@@ -54,7 +57,12 @@ namespace itk
     m_Radius = 7.0;
     m_FixedImageGradientCalculator = GradientCalculatorType::New();
     m_WarpedImageGradientCalculator = GradientCalculatorType::New();
+    m_WeightImageGradientCalculator = GradientCalculatorType::New();
+
     m_GradientType = GRADIENT_TYPE_WARPED;
+
+    m_WeightImage = nullptr;
+    m_DivergenceImage = nullptr;
   }
 
 
@@ -140,9 +148,10 @@ namespace itk
     using GaussianOperator = itk::GaussianOperator<RealType, ImageDimension>;
     using InnerProduct = itk::NeighborhoodInnerProduct<DivergenceImage>;
     using MinMaxFilter = itk::MinimumMaximumImageFilter<TMovingImage>;
+    using AbsImageFilter = itk::AbsImageFilter<DivergenceImage, DivergenceImage>;
 
 
-    m_WeightImage = DivergenceImage::New();
+    typename DivergenceImage::Pointer tmpWeightImage = DivergenceImage::New();
     auto fixed = this->GetFixedImage();
     typename DivergenceImage::IndexType start;
     start[0] = 0; // first index on X
@@ -158,22 +167,28 @@ namespace itk
     typename DivergenceImage::RegionType region;
     region.SetSize(size);
     region.SetIndex(start);
-    m_WeightImage->SetRegions(region);
-    m_WeightImage->Allocate();
-    m_WeightImage->FillBuffer(0);
+    tmpWeightImage->SetRegions(region);
+    tmpWeightImage->Allocate();
+    tmpWeightImage->FillBuffer(0);
+
+    typename AbsImageFilter::Pointer absFilter = AbsImageFilter::New();
+    absFilter->SetInput(m_DivergenceImage);
+    absFilter->Update();
+    DivergenceImagePointer absDivImage = absFilter->GetOutput();
+
 
     typename NeighborhoodIteratorType::RadiusType radius;
     for (unsigned int i = 0; i < DivergenceImage::ImageDimension; ++i) radius[i] = m_Radius;
     radius[2] = 0;
     NeighborhoodIteratorType it( radius, m_DivergenceImage, m_DivergenceImage->GetRequestedRegion() );
-    ImageIterator out( m_WeightImage, m_WeightImage->GetRequestedRegion() );
+    ImageIterator out( tmpWeightImage, tmpWeightImage->GetRequestedRegion() );
 
 
     //Gaussian operator
     RealType kernelSize = 2 * m_Radius + 1;
     RealType sigma = kernelSize / 4;
     GaussianOperator gaussianOperator;
-    gaussianOperator.SetVariance(sigma * sigma);
+    gaussianOperator.SetVariance(sigma*sigma);
     gaussianOperator.CreateToRadius(radius);
 
     InnerProduct innerProduct;
@@ -188,28 +203,51 @@ namespace itk
         else if (value > 0) pos = true;
       }
       if (pos && neg) {
-        RealType average = innerProduct(it, gaussianOperator) / (float)(it.Size());
+        //Absolute values
+        NeighborhoodIteratorType cloneIt(radius, absDivImage, absDivImage->GetRequestedRegion());
+        cloneIt.SetLocation(it.GetIndex());
+        RealType average = innerProduct(cloneIt, gaussianOperator) / (float)(cloneIt.Size());
         RealType minRadius = this->MinimumRadiusDivergenceChange(it);
-        RealType radiusFunction = std::exp(-std::pow(minRadius-1, 2)/m_Radius);
+        RealType radiusFunction = std::exp(-std::pow(minRadius-1, 2)/1.0);
         out.Set(average*radiusFunction);
       }
+      // auto value = it.GetCenterPixel();
+      // if (value < 0) {
+      //   out.Set(value);
+      // }
       ++it;
       ++out;
     }
 
     typename MinMaxFilter::Pointer minmax = MinMaxFilter::New();
-    minmax->SetInput(m_WeightImage);
+    minmax->SetInput(tmpWeightImage);
     minmax->Update();
 
     RealType max_value = minmax->GetMaximum();
     RealType max_bound = max_value;
+    ImageIterator inWeight( tmpWeightImage, tmpWeightImage->GetRequestedRegion() );
     ImageIterator outWeight( m_WeightImage, m_WeightImage->GetRequestedRegion() );
-    out.GoToBegin();
+    inWeight.GoToBegin();
+    outWeight.GoToBegin();
     while ( !outWeight.IsAtEnd() ) {
-      RealType w = outWeight.Get();
-      RealType outW = std::exp(-(w*w)/(2*max_bound*max_bound));
+      RealType previousW = outWeight.Get();
+      if (std::isnan(previousW)) {
+        previousW = 1.0;
+      }
+      auto index = outWeight.GetIndex();
+      if ((index[0] >= 39 && index[0] <= 44 && index[1] >= 39 && index[1] <= 44) ||
+          ((index[0] >= 57 && index[0] <= 63 && index[1] >= 50 && index[1] <= 56))) {
+        previousW = 0.0;
+      }
+      RealType w = inWeight.Get();
+      RealType minValue = 0.0;
+      RealType outW = previousW - (1.0 - std::exp(-(w*w)/(2*max_bound*max_bound)));
+      outW = std::max(outW, minValue);
+      outW = std::exp(-(w*w)/(2*max_bound*max_bound));
       outWeight.Set(outW);
+      outWeight.Set(previousW);
       ++outWeight;
+      ++inWeight;
     }
   }
 
@@ -279,6 +317,29 @@ namespace itk
     // Call superclass method
     Superclass::InitializeIteration();
 
+    if ( !this->GetWeightImage() ) {
+      m_WeightImage = DivergenceImage::New();
+
+      auto fixed = this->GetFixedImage();
+      typename DivergenceImage::IndexType start;
+      start[0] = 0; // first index on X
+      start[1] = 0; // first index on Y
+      start[2] = 0; // first index on Z
+
+      typename DivergenceImage::SizeType size;
+      auto sizeFixed = fixed->GetLargestPossibleRegion().GetSize();
+      size[0] = sizeFixed[0]; // size along X
+      size[1] = sizeFixed[1]; // size along Y
+      size[2] = sizeFixed[2]; // size along Z
+
+      typename DivergenceImage::RegionType region;
+      region.SetSize(size);
+      region.SetIndex(start);
+      m_WeightImage->SetRegions(region);
+      m_WeightImage->Allocate();
+      m_WeightImage->FillBuffer(1.0);
+    }
+
     //Update DT values taking into account the deformed shape
     this->UpdateValues();
     this->ComputeDivergence();
@@ -299,6 +360,7 @@ namespace itk
     // setup gradient calculator
     m_WarpedImageGradientCalculator->SetInputImage( this->GetWarpedImage() );
     m_FixedImageGradientCalculator->SetInputImage( this->GetFixedImage() );
+    m_WeightImageGradientCalculator->SetInputImage ( this->GetWeightImage() );
   }
 
 /**
@@ -325,6 +387,33 @@ namespace itk
 
     const auto warpedValue = (double) this->GetWarpedImage()->GetPixel( index );
     const auto fixedValue = (double) this->GetFixedImage()->GetPixel( index );
+    auto weight = this->GetWeightImage()->GetPixel( index );
+    if (std::isnan(weight)) {
+      if (index[0] >= 39 && index[0] <= 44 && index[1] >= 39 && index[1] <= 44) {
+        weight = 0.0;
+      }
+      weight = 1.0;
+    }
+
+    // typename GradientCalculatorType::OutputType gradientWeight = m_WeightImageGradientCalculator->EvaluateAtIndex( index );
+    // auto norm = gradientWeight.Normalize();
+    // IndexType newPoint = index;
+    // int i = 0;
+    // while (norm > 0 && i < m_Radius) {
+    //   itk::Offset<3> off;
+    //   off[0] = gradientWeight[0];
+    //   off[1] = gradientWeight[1];
+    //   off[2] = gradientWeight[2];
+    //   newPoint += off;
+    //   gradientWeight = m_WeightImageGradientCalculator->EvaluateAtIndex( newPoint );
+    //   norm = gradientWeight.Normalize();
+    //   i++;
+    // }
+    // if (index != newPoint && index[0] >= 39 && index[0] <= 44 && index[1] >= 39 && index[1] <= 44) {
+    //   std::cout << norm << std::endl;
+    //   std::cout << index << newPoint << std::endl;
+    // }
+
 
     // Calculate spped value
     const double speedValue = fixedValue - warpedValue;
@@ -364,7 +453,10 @@ namespace itk
 
       for( unsigned int j = 0; j < ImageDimension; j++ )
       {
-        update[j] = speedValue * gradient[j];
+        // if (weight == 1)
+          update[j] = speedValue * gradient[j];
+        // if (weight == 0)
+        //   update[j] = 1;
       }
     }
 

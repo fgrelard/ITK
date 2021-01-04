@@ -190,6 +190,9 @@ private:
   /** Function to compute derivatives of the warped image. */
   GradientCalculatorPointer       m_WarpedImageGradientCalculator;
 
+  GradientCalculatorPointer       m_WeightImageGradientCalculator;
+
+
   /** Set if warped or fixed image gradient is used for force computation. */
   GradientType                    m_GradientType;
 
