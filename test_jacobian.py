@@ -51,43 +51,11 @@ im = im[:,:,10]
 r=1
 
 X = sitk.GetArrayFromImage(im)
-shape = X.shape
-X = np.pad(X, (r,r), 'constant')
-M = np.zeros_like(X)
 
-diff = 0
-w = gaussian_weights(r+diff)
-if diff > 0:
-    w=w[diff:-diff-1, diff:-diff-1]
-
-edges_h = sobel_h(X)
-edges_v = sobel_v(X)
-for index in np.ndindex(shape):
-    values = X[index[0]-r:index[0]+r+1, index[1]-r:index[1]+r+1].copy()
-    # if values.shape[0] > 0 and values.shape[1] > 0:
-    #     values[r+1, r+1] = 0
-    if (values < 0).any() and (values > 0).any():
-        min_d = min([i for i in range(1,r+1)  if (values[r-i:r+i+1,r-i:r+i+1] < 0).any() and (values[r-i:r+i+1,r-i:r+i+1] > 0).any()])
-        min_d = find_minimum_radius(values, r)
-        vals = values[r-min_d:r+min_d+1, r-min_d:r+min_d+1]
-        M[index] = np.mean(values * w[..., None]) * np.exp(-(min_d-1)**2/1.0)
-        M[index] = min_d
-        # M[index] = (min_d)
-    #     if min_d > 1:
-    #         M[index] = M[index] if M[index] > 0 else -M[index]
-    # if edges_h[index] > 0 or edges_v[index] > 0:
-    #     M[index] = max(edges_h[index], edges_v[index])
-    # else:
-    #     M[index] = 0
-
-# M = local_oriented_max(X, shape)
-
-
+M = X.copy()
 sigma = np.max(M)/2
-# M = np.exp(-M**2/(2*sigma**2))
+M = 1.0-np.exp(-M**2/(2*sigma**2))
 
-M=M[r:-r, r:-r]
-X=X[r:-r, r:-r]
 imO = sitk.ReadImage("/mnt/d/new_images/Registration/250/Grain3_Xyl/variational/fixed.tif")
 O = sitk.GetArrayFromImage(imO)
 O = sitk.GetArrayFromImage(imO[:,:,0])
@@ -97,12 +65,9 @@ coords = np.argwhere(M > 0)
 mask[tuple(coords.T)] = True
 markers, _ = ndi.label(mask)
 
-labels = watershed(-M, markers, mask=M)
-
-fig,ax=plt.subplots(2,2)
-ax[0,0].imshow(X)
-ax[0,1].imshow(M)
-ax[1,0].imshow(labels)
-ax[1,1].imshow(O, cmap="viridis")
-ax[1,1].imshow(M,alpha=0.1, cmap="jet")
+fig,ax=plt.subplots(1,3)
+ax[0].imshow(X)
+ax[1].imshow(M)
+ax[2].imshow(O, cmap="viridis")
+ax[2].imshow(M,alpha=0.1, cmap="jet")
 plt.show()

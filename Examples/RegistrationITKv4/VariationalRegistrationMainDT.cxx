@@ -183,6 +183,9 @@ public:
   using ImageTypeU2D = itk::Image<unsigned char, 2>;
   using ImageTypeU3D = itk::Image<unsigned char, 3>;
 
+  using ImageVector = typename RegistrationFilterType::OutputImageType;
+  using ImageVector2D = itk::Image<typename ImageVector::PixelType, 2>;
+
   using ImageType = typename RegistrationFilterType::FixedImageType;
   using PixelType = typename ImageType::PixelType;
   using ImageType2D = itk::Image<PixelType, 2>;
@@ -191,20 +194,26 @@ public:
   using Pointer = itk::SmartPointer<CommandIterationUpdate>;
   using JoinSeriesDeformationFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
   using JoinSeriesDivFilter = itk::JoinSeriesImageFilter<ImageType2D, ImageType>;
+  using JoinSeriesFieldFilter = itk::JoinSeriesImageFilter<ImageVector2D, ImageVector>;
   using ExtractFilterType = itk::ExtractImageFilter<ImageType, ImageType2D>;
-
-  itkNewMacro(CommandIterationUpdate);
+  using ExtractVectorType = itk::ExtractImageFilter<ImageVector, ImageVector2D>;
+  itkNewMacro( CommandIterationUpdate );
 
 protected:
   CommandIterationUpdate(){
     m_JoinDeformation = JoinSeriesDeformationFilter::New();
     m_JoinDiv = JoinSeriesDivFilter::New();
     m_JoinWeight = JoinSeriesDivFilter::New();
+    m_JoinField = JoinSeriesFieldFilter::New();
   };
 
 
 public:
 
+  typename ImageVector::Pointer GetField() {
+    m_JoinField->Update();
+    return m_JoinField->GetOutput();
+  }
 
   typename ImageType::Pointer GetDeformation() {
     m_JoinDeformation->Update();
@@ -226,7 +235,8 @@ public:
   void Execute(itk::Object * caller, const itk::EventObject & event) override
   {
     using DuplicatorType = itk::ImageDuplicator<ImageType>;
-    using ImageVector = typename RegistrationFilterType::OutputImageType;
+    using DuplicatorFieldType = itk::ImageDuplicator<ImageVector>;
+
     using FunctionType =  VariationalRegistrationSSDMissingCorrespondenceFunction<ImageType, ImageType, typename RegistrationFilterType::DisplacementFieldType>;
 
     auto * filter = static_cast<RegistrationFilterType * >(caller);
@@ -237,6 +247,11 @@ public:
     // using FunctionType = typename RegistrationFilterType::RegistrationFunctionType;
 
     typename ImageVector::Pointer field = filter->GetDisplacementField();
+    typename DuplicatorFieldType::Pointer duplicatorField = DuplicatorFieldType::New();
+    duplicatorField->SetInputImage(field);
+    duplicatorField->Update();
+    typename ImageVector::Pointer clonedField = duplicatorField->GetOutput();
+
 
     auto fixed = filter->GetFixedImage();
     auto moving = filter->GetMovingImage();
@@ -306,6 +321,14 @@ public:
       m_JoinDiv->PushBackInput(div.GetPointer());
       m_JoinWeight->PushBackInput(weight.GetPointer());
     }
+
+    typename ExtractVectorType::Pointer extractFilter4 = ExtractVectorType::New();
+    extractFilter4->SetDirectionCollapseToSubmatrix();
+    extractFilter4->SetExtractionRegion(desiredRegion);
+    extractFilter4->SetInput(clonedField);
+    extractFilter4->Update();
+    m_JoinField->PushBackInput(extractFilter4->GetOutput());
+
   }
 
   void Execute(const itk::Object * object, const itk::EventObject & event) override
@@ -319,6 +342,7 @@ private:
   typename JoinSeriesDeformationFilter::Pointer m_JoinDeformation;
   typename JoinSeriesDivFilter::Pointer m_JoinDiv;
   typename JoinSeriesDivFilter::Pointer m_JoinWeight;
+  typename JoinSeriesFieldFilter::Pointer m_JoinField;
 
 };
 
@@ -1277,8 +1301,12 @@ int main( int argc, char *argv[] )
   ImageType::Pointer deformation = observer->GetDeformation();
   ImageType::Pointer divergence = observer->GetDivergence();
   ImageType::Pointer weight = observer->GetWeight();
+  DisplacementFieldType::ConstPointer field_0 = observer->GetField();
   std::cout << deformation->GetLargestPossibleRegion().GetSize() << std::endl;
   ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
+  DisplacementFieldWriterType::Pointer DisplacementFieldWriter;
+  DisplacementFieldWriter = DisplacementFieldWriterType::New();
+
 
   std::string str(outputDisplacementFilename);
   std::string path = str.substr(0, str.find_last_of("/"));
@@ -1298,6 +1326,10 @@ int main( int argc, char *argv[] )
   ImageWriter->SetInput( weight );
   ImageWriter->SetFileName( path + sep + "weight.tif" );
   ImageWriter->Update();
+  DisplacementFieldWriter->SetInput( field_0 );
+  DisplacementFieldWriter->SetFileName( path + sep + "firstfield.mha" );
+  DisplacementFieldWriter->Update();
+
   if( searchSpace == 1 || searchSpace == 2 )
   {
     outputVelocityField = mrRegFilter->GetOutput();

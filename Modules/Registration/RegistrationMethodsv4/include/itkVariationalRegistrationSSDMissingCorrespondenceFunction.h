@@ -167,6 +167,8 @@ protected:
 
   void ComputeWeights();
 
+  void ComputeWeights2();
+
   void UpdateValues();
 
   RealType MinimumRadiusDivergenceChange(const NeighborhoodIteratorType&);

@@ -28,6 +28,9 @@
 
 #include "itkVectorMagnitudeVarianceImageFilter.h"
 #include "itkVectorDivergenceImageFilter.h"
+#include "itkVectorMagnitudeImageFilter.h"
+#include "itkDisplacementFieldJacobianDeterminantFilter.h"
+
 #include "itkGaussianOperator.h"
 #include "itkNeighborhoodInnerProduct.h"
 #include "itkAbsImageFilter.h"
@@ -74,6 +77,11 @@ namespace itk
       itk::VectorDivergenceImageFilter<DisplacementFieldType> ;
     using VarianceFilter =
       itk::VectorMagnitudeVarianceImageFilter<DisplacementFieldType>;
+    using MagnitudeFilter =
+      itk::VectorMagnitudeImageFilter<DisplacementFieldType, DivergenceImage>;
+    using JacobianFilter =
+      itk::DisplacementFieldJacobianDeterminantFilter<DisplacementFieldType, RealType, DivergenceImage>;
+
     using ImageIterator = itk::ImageRegionIteratorWithIndex<DivergenceImage>;
     using IteratorType = itk::ImageRegionIterator<DivergenceImage>;
     using DuplicatorType = itk::ImageDuplicator<DivergenceImage>;
@@ -85,13 +93,24 @@ namespace itk
     divergenceFilter->SetInput(field);
     divergenceFilter->Update();
 
-    typename VarianceFilter::Pointer magnitudeFilter = VarianceFilter::New();
-    magnitudeFilter->SetUsePrincipleComponentsOff();
-    magnitudeFilter->SetUseImageSpacingOn();
+    typename MagnitudeFilter::Pointer magnitudeFilter = MagnitudeFilter::New();
     magnitudeFilter->SetInput(field);
     magnitudeFilter->Update();
+
+    typename JacobianFilter::Pointer jacobianFilter = JacobianFilter::New();
+    jacobianFilter->SetUseImageSpacingOn();
+    jacobianFilter->SetInput(field);
+    jacobianFilter->Update();
+
+    typename VarianceFilter::Pointer varianceFilter = VarianceFilter::New();
+    varianceFilter->SetUsePrincipleComponentsOff();
+    varianceFilter->SetUseImageSpacingOn();
+    varianceFilter->SetInput(field);
+    varianceFilter->Update();
     DivergenceImagePointer gradientImage = divergenceFilter->GetOutput();
+    DivergenceImagePointer varianceImage = varianceFilter->GetOutput();
     DivergenceImagePointer magnitudeImage = magnitudeFilter->GetOutput();
+    DivergenceImagePointer jacobianImage = jacobianFilter->GetOutput();
 
     typename DuplicatorType::Pointer duplicator = DuplicatorType::New();
     duplicator->SetInputImage(gradientImage);
@@ -100,13 +119,16 @@ namespace itk
 
     ImageIterator  it( m_DivergenceImage, m_DivergenceImage->GetRequestedRegion() );
     it.GoToBegin();
+
     while( !it.IsAtEnd() )
     {
 
       typename DivergenceImage::IndexType index3D = it.GetIndex();
-      typename DivergenceImage::PixelType g = it.Get();
+      typename DivergenceImage::PixelType d = it.Get();
+      typename DivergenceImage::PixelType j = jacobianImage->GetPixel(index3D);
+      typename DivergenceImage::PixelType v = varianceImage->GetPixel(index3D);
       typename DivergenceImage::PixelType m = magnitudeImage->GetPixel(index3D);
-      it.Set( g );
+      it.Set( j );
       ++it;
     }
   }
@@ -141,7 +163,7 @@ namespace itk
     return m_Radius;
   }
 
-  template <typename TFixedImage, typename TMovingImage, typename TDisplacementField>
+   template <typename TFixedImage, typename TMovingImage, typename TDisplacementField>
   void
   VariationalRegistrationSSDMissingCorrespondenceFunction<TFixedImage, TMovingImage, TDisplacementField>::ComputeWeights() {
     using ImageIterator = itk::ImageRegionIterator<DivergenceImage>;
@@ -251,6 +273,34 @@ namespace itk
     }
   }
 
+  template <typename TFixedImage, typename TMovingImage, typename TDisplacementField>
+  void
+  VariationalRegistrationSSDMissingCorrespondenceFunction<TFixedImage, TMovingImage, TDisplacementField>::ComputeWeights2() {
+
+    using ImageIterator = itk::ImageRegionIterator<DivergenceImage>;
+    using InnerProduct = itk::NeighborhoodInnerProduct<DivergenceImage>;
+    using MinMaxFilter = itk::MinimumMaximumImageFilter<TMovingImage>;
+
+
+    typename MinMaxFilter::Pointer minmax = MinMaxFilter::New();
+    minmax->SetInput(m_DivergenceImage);
+    minmax->Update();
+
+    RealType max_value = minmax->GetMaximum();
+    RealType max_bound = max_value/2;
+    ImageIterator in( m_DivergenceImage, m_DivergenceImage->GetRequestedRegion() );
+    ImageIterator outWeight( m_WeightImage, m_WeightImage->GetRequestedRegion() );
+
+    in.GoToBegin();
+    outWeight.GoToBegin();
+    while ( !outWeight.IsAtEnd() ) {
+      RealType w = in.Get();
+      RealType outW = 1.0 - std::exp(-(w*w)/(2*max_bound*max_bound));
+      outWeight.Set(outW);
+      ++outWeight;
+      ++in;
+    }
+  }
 
   template <typename TFixedImage, typename TMovingImage, typename TDisplacementField>
   void
@@ -343,7 +393,7 @@ namespace itk
     //Update DT values taking into account the deformed shape
     this->UpdateValues();
     this->ComputeDivergence();
-    this->ComputeWeights();
+    this->ComputeWeights2();
 
     // cache fixed image information
     SpacingType fixedImageSpacing = this->GetFixedImage()->GetSpacing();
@@ -456,7 +506,7 @@ namespace itk
         // if (weight == 1)
           update[j] = speedValue * gradient[j];
         // if (weight == 0)
-        //   update[j] = 1;
+        //   update[j] = 1.6;
       }
     }
 
