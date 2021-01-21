@@ -288,14 +288,15 @@ namespace itk
 
     RealType max_value = minmax->GetMaximum();
     RealType max_bound = max_value/2;
-    ImageIterator in( m_DivergenceImage, m_DivergenceImage->GetRequestedRegion() );
-    ImageIterator outWeight( m_WeightImage, m_WeightImage->GetRequestedRegion() );
+    ImageIterator in( m_DivergenceImage, m_DivergenceImage->GetLargestPossibleRegion() );
+    ImageIterator outWeight( m_WeightImage, m_WeightImage->GetLargestPossibleRegion() );
 
     in.GoToBegin();
     outWeight.GoToBegin();
     while ( !outWeight.IsAtEnd() ) {
       RealType w = in.Get();
-      RealType outW = 1.0 - std::exp(-(w*w)/(2*max_bound*max_bound));
+      RealType outW = std::exp(-(w*w)/(2*max_bound*max_bound));
+      // outW = std::exp(1/outW) - (std::exp(1) - 1);
       outWeight.Set(outW);
       ++outWeight;
       ++in;
@@ -438,12 +439,12 @@ namespace itk
     const auto warpedValue = (double) this->GetWarpedImage()->GetPixel( index );
     const auto fixedValue = (double) this->GetFixedImage()->GetPixel( index );
     auto weight = this->GetWeightImage()->GetPixel( index );
-    if (std::isnan(weight)) {
-      if (index[0] >= 39 && index[0] <= 44 && index[1] >= 39 && index[1] <= 44) {
-        weight = 0.0;
-      }
-      weight = 1.0;
-    }
+    // if (std::isnan(weight)) {
+    //   if (index[0] >= 39 && index[0] <= 44 && index[1] >= 39 && index[1] <= 44) {
+    //     weight = 0.0;
+    //   }
+    //   weight = 1.0;
+    // }
 
     // typename GradientCalculatorType::OutputType gradientWeight = m_WeightImageGradientCalculator->EvaluateAtIndex( index );
     // auto norm = gradientWeight.Normalize();
@@ -503,10 +504,7 @@ namespace itk
 
       for( unsigned int j = 0; j < ImageDimension; j++ )
       {
-        // if (weight == 1)
           update[j] = speedValue * gradient[j];
-        // if (weight == 0)
-        //   update[j] = 1.6;
       }
     }
 

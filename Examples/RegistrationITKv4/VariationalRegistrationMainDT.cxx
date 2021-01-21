@@ -271,7 +271,7 @@ public:
     std::cout << size << std::endl;
     size[2] = 0; // we extract along z direction
     typename ImageType::IndexType start = inputRegion.GetIndex();
-    start[2] = 0;
+    start[2] = 6;
     typename ImageType::RegionType desiredRegion;
     desiredRegion.SetSize(size);
     desiredRegion.SetIndex(start);
@@ -314,12 +314,12 @@ public:
     }
 
     typename ImageType2D::Pointer div = extractFilter2->GetOutput();
-    typename ImageType2D::Pointer weight = extractFilter3->GetOutput();
+    typename ImageType2D::Pointer w = extractFilter3->GetOutput();
 
     if (inputRegion.GetSize()[0] == 100) {
       m_JoinDeformation->PushBackInput(deformation2D);
       m_JoinDiv->PushBackInput(div.GetPointer());
-      m_JoinWeight->PushBackInput(weight.GetPointer());
+      m_JoinWeight->PushBackInput(w.GetPointer());
     }
 
     typename ExtractVectorType::Pointer extractFilter4 = ExtractVectorType::New();
