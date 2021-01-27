@@ -45,7 +45,7 @@ def local_oriented_max(X, shape):
             M[index] = (1 if h_condition or v_condition else 0)
     return M
 
-z = 6
+z = 1
 im = sitk.ReadImage("/mnt/d/new_images/Registration/250/Grain3_Xyl/variational/divergence.tif")
 im = im[:,:,10]
 r=1
@@ -54,7 +54,8 @@ X = sitk.GetArrayFromImage(im)
 
 M = X.copy()
 sigma = np.max(M)/2
-M = np.exp(-M**2/(2*sigma**2))
+M = 2*(M-1)**2+1
+# M = np.exp(-M**2/(2*sigma**2))
 
 imO = sitk.ReadImage("/mnt/d/new_images/Registration/250/Grain3_Xyl/variational/moving.tif")
 O = sitk.GetArrayFromImage(imO)

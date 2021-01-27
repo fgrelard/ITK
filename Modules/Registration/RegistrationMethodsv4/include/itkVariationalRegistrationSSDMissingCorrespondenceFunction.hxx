@@ -98,7 +98,7 @@ namespace itk
     magnitudeFilter->Update();
 
     typename JacobianFilter::Pointer jacobianFilter = JacobianFilter::New();
-    jacobianFilter->SetUseImageSpacingOn();
+    jacobianFilter->SetUseImageSpacingOff();
     jacobianFilter->SetInput(field);
     jacobianFilter->Update();
 
@@ -108,29 +108,30 @@ namespace itk
     varianceFilter->SetInput(field);
     varianceFilter->Update();
     DivergenceImagePointer gradientImage = divergenceFilter->GetOutput();
-    DivergenceImagePointer varianceImage = varianceFilter->GetOutput();
-    DivergenceImagePointer magnitudeImage = magnitudeFilter->GetOutput();
+    // DivergenceImagePointer varianceImage = varianceFilter->GetOutput();
+    // DivergenceImagePointer magnitudeImage = magnitudeFilter->GetOutput();
     DivergenceImagePointer jacobianImage = jacobianFilter->GetOutput();
 
     typename DuplicatorType::Pointer duplicator = DuplicatorType::New();
-    duplicator->SetInputImage(gradientImage);
+    duplicator->SetInputImage(jacobianImage);
     duplicator->Update();
     m_DivergenceImage = duplicator->GetOutput();
 
-    ImageIterator  it( m_DivergenceImage, m_DivergenceImage->GetRequestedRegion() );
-    it.GoToBegin();
 
-    while( !it.IsAtEnd() )
-    {
+    // ImageIterator  it( m_DivergenceImage, m_DivergenceImage->GetRequestedRegion() );
+    // it.GoToBegin();
 
-      typename DivergenceImage::IndexType index3D = it.GetIndex();
-      typename DivergenceImage::PixelType d = it.Get();
-      typename DivergenceImage::PixelType j = jacobianImage->GetPixel(index3D);
-      typename DivergenceImage::PixelType v = varianceImage->GetPixel(index3D);
-      typename DivergenceImage::PixelType m = magnitudeImage->GetPixel(index3D);
-      it.Set( j );
-      ++it;
-    }
+    // while( !it.IsAtEnd() )
+    // {
+
+    //   typename DivergenceImage::IndexType index3D = it.GetIndex();
+    //   // typename DivergenceImage::PixelType d = it.Get();
+    //   typename DivergenceImage::PixelType j = jacobianImage->GetPixel(index3D);
+    //   // typename DivergenceImage::PixelType v = varianceImage->GetPixel(index3D);
+    //   // typename DivergenceImage::PixelType m = magnitudeImage->GetPixel(index3D);
+    //   it.Set( j );
+    //   ++it;
+    // }
   }
 
   template  <typename TFixedImage, typename TMovingImage, typename TDisplacementField>
@@ -287,7 +288,7 @@ namespace itk
     minmax->Update();
 
     RealType max_value = minmax->GetMaximum();
-    RealType max_bound = max_value/2;
+    RealType max_bound = max_value;
     ImageIterator in( m_DivergenceImage, m_DivergenceImage->GetLargestPossibleRegion() );
     ImageIterator outWeight( m_WeightImage, m_WeightImage->GetLargestPossibleRegion() );
 
@@ -295,8 +296,16 @@ namespace itk
     outWeight.GoToBegin();
     while ( !outWeight.IsAtEnd() ) {
       RealType w = in.Get();
-      RealType outW = std::exp(-(w*w)/(2*max_bound*max_bound));
+      // RealType outW = std::exp(-(w*w)/(2*max_bound*max_bound));
+      // RealType outW = std::min(2.0, 2 * std::pow((w-1), 2) + 1);
       // outW = std::exp(1/outW) - (std::exp(1) - 1);
+      RealType outW;
+      if (w > 1.0) {
+        outW = (RealType) this->GetWarpedImage()->GetPixel( in.GetIndex() );;
+      }
+      else {
+        outW = 1.0;
+      }
       outWeight.Set(outW);
       ++outWeight;
       ++in;
@@ -367,7 +376,6 @@ namespace itk
   {
     // Call superclass method
     Superclass::InitializeIteration();
-
     if ( !this->GetWeightImage() ) {
       m_WeightImage = DivergenceImage::New();
 
@@ -394,6 +402,12 @@ namespace itk
     //Update DT values taking into account the deformed shape
     this->UpdateValues();
     this->ComputeDivergence();
+    using MinMaxFilter = itk::MinimumMaximumImageFilter<DivergenceImage>;
+    typename MinMaxFilter::Pointer minmax = MinMaxFilter::New();
+    minmax->SetInput(m_WeightImage);
+    minmax->Update();
+    RealType max_value = minmax->GetMaximum();
+    // if (max_value == 1.0)
     this->ComputeWeights2();
 
     // cache fixed image information
@@ -504,7 +518,10 @@ namespace itk
 
       for( unsigned int j = 0; j < ImageDimension; j++ )
       {
-          update[j] = speedValue * gradient[j];
+        // if (weight == 1.0)
+        update[j] = weight * speedValue * gradient[j];
+        // else
+        //   update[j] = warpedValue;
       }
     }
 

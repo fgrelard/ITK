@@ -60,6 +60,9 @@ target_link_libraries(ImageRegistrationMALDI ${ITK_LIBRARIES})
 add_executable(VariationalRegistrationDT VariationalRegistrationMainDT.cxx )
 target_link_libraries(VariationalRegistrationDT ${ITK_LIBRARIES})
 
+add_executable(VariationalRegistrationDTOld VariationalRegistrationMainDTOld.cxx )
+target_link_libraries(VariationalRegistrationDTOld ${ITK_LIBRARIES})
+
 add_executable(DeformableRegistration6 DeformableRegistration6.cxx )
 target_link_libraries(DeformableRegistration6 ${ITK_LIBRARIES})
 
