@@ -60,6 +60,12 @@ target_link_libraries(ImageRegistrationMALDI ${ITK_LIBRARIES})
 add_executable(VariationalRegistrationDT VariationalRegistrationMainDT.cxx )
 target_link_libraries(VariationalRegistrationDT ${ITK_LIBRARIES})
 
+add_executable(VariationalRegistrationDT2D VariationalRegistrationMainDT.cxx)
+target_link_libraries(VariationalRegistrationDT2D ${ITK_LIBRARIES})
+set_target_properties(VariationalRegistrationDT2D PROPERTIES COMPILE_FLAGS -DUSE_2D_IMPL)
+
+
+
 add_executable(VariationalRegistrationDTOld VariationalRegistrationMainDTOld.cxx )
 target_link_libraries(VariationalRegistrationDTOld ${ITK_LIBRARIES})
 

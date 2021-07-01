@@ -907,7 +907,10 @@ int main( int argc, char *argv[] )
   SpacingType spacing;
   spacing[0] = 1;
   spacing[1] = 1;
+
+  #ifndef USE_2D_IMPL
   spacing[2] = 10;
+  #endif
 
 
   ImageReaderType::Pointer fixedImageReader;
@@ -917,9 +920,10 @@ int main( int argc, char *argv[] )
   fixedImageReader->Update();
   fixedImage = fixedImageReader->GetOutput();
   fixedImage->SetSpacing(spacing);
-  if (!noDT)
-    fixedImage = ComputeDT(fixedImage, false, fillHoles);
-  // fixedImage = InvertDT(fixedImage);
+  if (!noDT) {
+    fixedImage = ComputeDT(fixedImage, true, fillHoles);
+    // fixedImage = InvertDT(fixedImage);
+  }
   std::cout << "Fixed spacing=" << fixedImage->GetSpacing() << std::endl;
 
   std::cout << "Loading moving image ... " << std::endl;
@@ -932,9 +936,10 @@ int main( int argc, char *argv[] )
   auto movingImageOriginal = movingImageReader->GetOutput();
   movingImage->SetSpacing(spacing);
 
-  if (!noDT)
+  if (!noDT) {
     movingImage = ComputeDT(movingImage, true, fillHoles);
-  // movingImage = InvertDT(movingImage);
+    // movingImage = InvertDT(movingImage);
+  }
   std::cout << "Moving spacing=" << movingImage->GetSpacing() << std::endl;
 
   if( fixedImage.IsNull() || movingImage.IsNull() )
@@ -1312,37 +1317,37 @@ int main( int argc, char *argv[] )
   std::cout << "Registration execution finished." << std::endl;
 
   DisplacementFieldType::ConstPointer outputDisplacementField = mrRegFilter->GetDisplacementField();
-  ImageType::Pointer deformation = observer->GetDeformation();
-  ImageType::Pointer divergence = observer->GetDivergence();
-  ImageType::Pointer weight = observer->GetWeight();
-  DisplacementFieldType::ConstPointer field_0 = observer->GetField();
-  std::cout << deformation->GetLargestPossibleRegion().GetSize() << std::endl;
-  ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
-  DisplacementFieldWriterType::Pointer DisplacementFieldWriter;
-  DisplacementFieldWriter = DisplacementFieldWriterType::New();
+  // ImageType::Pointer deformation = observer->GetDeformation();
+  // ImageType::Pointer divergence = observer->GetDivergence();
+  // ImageType::Pointer weight = observer->GetWeight();
+  // DisplacementFieldType::ConstPointer field_0 = observer->GetField();
+  // std::cout << deformation->GetLargestPossibleRegion().GetSize() << std::endl;
+  // ImageWriterType::Pointer  ImageWriter = ImageWriterType::New();
+  // DisplacementFieldWriterType::Pointer DisplacementFieldWriter;
+  // DisplacementFieldWriter = DisplacementFieldWriterType::New();
 
 
-  std::string str(outputDisplacementFilename);
-  std::string path = str.substr(0, str.find_last_of("/"));
-  std::string sep = "/";
-  ImageWriter->SetInput( movingImage );
-  ImageWriter->SetFileName( path + sep + "moving.tif" );
-  ImageWriter->Update();
-  ImageWriter->SetInput( fixedImage );
-  ImageWriter->SetFileName( path + sep + "fixed.tif" );
-  ImageWriter->Update();
-  ImageWriter->SetInput( deformation );
-  ImageWriter->SetFileName( path + sep + "deformation.tif" );
-  ImageWriter->Update();
-  ImageWriter->SetInput( divergence );
-  ImageWriter->SetFileName( path + sep + "divergence.tif" );
-  ImageWriter->Update();
-  ImageWriter->SetInput( weight );
-  ImageWriter->SetFileName( path + sep + "weight.tif" );
-  ImageWriter->Update();
-  DisplacementFieldWriter->SetInput( field_0 );
-  DisplacementFieldWriter->SetFileName( path + sep + "firstfield.mha" );
-  DisplacementFieldWriter->Update();
+  // std::string str(outputDisplacementFilename);
+  // std::string path = str.substr(0, str.find_last_of("/"));
+  // std::string sep = "/";
+  // ImageWriter->SetInput( movingImage );
+  // ImageWriter->SetFileName( path + sep + "moving.tif" );
+  // ImageWriter->Update();
+  // ImageWriter->SetInput( fixedImage );
+  // ImageWriter->SetFileName( path + sep + "fixed.tif" );
+  // ImageWriter->Update();
+  // ImageWriter->SetInput( deformation );
+  // ImageWriter->SetFileName( path + sep + "deformation.tif" );
+  // ImageWriter->Update();
+  // ImageWriter->SetInput( divergence );
+  // ImageWriter->SetFileName( path + sep + "divergence.tif" );
+  // ImageWriter->Update();
+  // ImageWriter->SetInput( weight );
+  // ImageWriter->SetFileName( path + sep + "weight.tif" );
+  // ImageWriter->Update();
+  // DisplacementFieldWriter->SetInput( field_0 );
+  // DisplacementFieldWriter->SetFileName( path + sep + "firstfield.mha" );
+  // DisplacementFieldWriter->Update();
 
   if( searchSpace == 1 || searchSpace == 2 )
   {
